@@ -6,7 +6,7 @@ import math
 st.set_page_config(page_title="Mullion Optimization & Procurement System", layout="wide")
 
 st.title("🏗️ Advanced Mullion Die Optimization & Procurement App")
-st.write("Process custom stock lengths, end trims, and cut lengths with precise background execution and manual die selection.")
+st.write("Upload or paste data below to process custom stock lengths, end trims, and cut thicknesses.")
 
 # Sidebar Configuration Parameters
 st.sidebar.header("⚙️ Configuration Parameters")
@@ -55,7 +55,7 @@ if df is not None:
         st.dataframe(df, use_container_width=True)
         
     die_lengths = {}
-    oversized_lengths = []
+    oversized_dict = {} # Tracks oversized elements by Die, Length, and Count
     
     for index, row in df.iterrows():
         die = row['Value']
@@ -69,8 +69,10 @@ if df is not None:
         usable_max_length = max_stock_input - (2 * end_trim_input)
         
         if length > usable_max_length:
-            for _ in range(count):
-                oversized_lengths.append({"Die": f"{die} - N", "Length (in)": length})
+            key = (die, length)
+            if key not in oversized_dict:
+                oversized_dict[key] = 0
+            oversized_dict[key] += count
             continue
             
         if die not in die_lengths:
@@ -80,15 +82,20 @@ if df is not None:
     results_summary = []
     detailed_bins = {}
     
-    if 'run_optimization' not in st.session_state:
-        st.session_state['run_optimization'] = False
-        
+    # Initialize Session State
+    if 'run_all' not in st.session_state:
+        st.session_state['run_all'] = False
+    if 'run_single' not in st.session_state:
+        st.session_state['run_single'] = False
+
     # --- Mode 1: Process All Dies ---
     if run_mode == "Process All Dies":
-        if st.button("Run Process for All Dies"):
-            st.session_state['run_optimization'] = True
+        run_all_button = st.button("Run Process for All Dies")
+        if run_all_button:
+            st.session_state['run_all'] = True
+            st.session_state['run_single'] = False
             
-        if st.session_state['run_optimization'] and die_lengths:
+        if st.session_state['run_all'] and die_lengths:
             with st.status("Optimizing all dies at once...", expanded=True) as status:
                 st.write("Validating parameters and lengths...")
                 
@@ -99,8 +106,7 @@ if df is not None:
                     valid_stocks = [s for s in range(int(calc_min_stock), int(max_stock_input) + 1)]
                     
                     if not valid_stocks:
-                        for l in lengths:
-                            oversized_lengths.append({"Die": f"{die} - N", "Length (in)": l})
+                        oversized_dict[(die, max_req)] = oversized_dict.get((die, max_req), 0) + len(lengths)
                         continue
                         
                     def calculate_mullion_optimization(req_lengths, stock_length):
@@ -151,13 +157,16 @@ if df is not None:
                     }
                 status.update(label="Optimization Processing Complete!", state="complete", expanded=False)
                 
-    # --- Mode 2: Process Dies Individually ---
+    # --- Mode 2: Process Die Individually ---
     else:
         selected_die = st.selectbox("Select a Die Profile to Run:", list(die_lengths.keys()) if die_lengths else [])
-        if st.button(f"Run Process for: {selected_die}"):
-            st.session_state['run_optimization'] = True
+        run_single_button = st.button(f"Run Process for: {selected_die}")
+        
+        if run_single_button:
+            st.session_state['run_single'] = True
+            st.session_state['run_all'] = False
             
-        if st.session_state['run_optimization'] and selected_die:
+        if st.session_state['run_single'] and selected_die:
             with st.status(f"Processing die {selected_die}...", expanded=True) as status:
                 lengths = die_lengths[selected_die]
                 max_req = max(lengths)
@@ -191,27 +200,27 @@ if df is not None:
                         best_sl = sl
                         best_bins = bins
                         
-                total_required = sum(lengths)
-                total_allocated = len(best_bins) * best_sl
-                scrap = total_allocated - total_required
-                waste_pct = (scrap / total_allocated) * 100 if total_allocated > 0 else 0
-                
-                results_summary.append({
-                    "Die": selected_die,
-                    "Total Pieces": len(lengths),
-                    "Required Length (in)": total_required,
-                    "Optimal Stock Length (in)": best_sl,
-                    "Bars Required": len(best_bins),
-                    "Scrap (in)": round(scrap, 2),
-                    "Waste %": round(waste_pct, 2)
-                })
-                
-                detailed_bins[selected_die] = {
-                    "stock_length": best_sl,
-                    "bins": best_bins,
-                    "waste_pct": waste_pct
-                }
-                status.update(label=f"Done processing {selected_die}!", state="complete", expanded=False)
+                    total_required = sum(lengths)
+                    total_allocated = len(best_bins) * best_sl
+                    scrap = total_allocated - total_required
+                    waste_pct = (scrap / total_allocated) * 100 if total_allocated > 0 else 0
+                    
+                    results_summary.append({
+                        "Die": selected_die,
+                        "Total Pieces": len(lengths),
+                        "Required Length (in)": total_required,
+                        "Optimal Stock Length (in)": best_sl,
+                        "Bars Required": len(best_bins),
+                        "Scrap (in)": round(scrap, 2),
+                        "Waste %": round(waste_pct, 2)
+                    })
+                    
+                    detailed_bins[selected_die] = {
+                        "stock_length": best_sl,
+                        "bins": best_bins,
+                        "waste_pct": waste_pct
+                    }
+                    status.update(label=f"Done processing {selected_die}!", state="complete", expanded=False)
 
     # 3. Render Output Results
     if results_summary:
@@ -267,11 +276,15 @@ if df is not None:
                             st.write(f"**Kerf Loss:** {total_cuts_kerf:.4f} in")
                             st.write(f"**Remaining Scrap After Cuts:** {remainder:.2f} in")
                             
-        # Handle Oversized Assemblies
-        if oversized_lengths:
+        # Handle Oversized Assemblies with Grouped Die/Length/Count
+        if oversized_dict:
             st.markdown("---")
             st.warning("⚠️ Oversized / Unmatched Pieces")
-            df_oversized = pd.DataFrame(oversized_lengths)
+            oversized_records = []
+            for (die, length), count in oversized_dict.items():
+                oversized_records.append({"Die": f"{die} - N", "Length (in)": length, "Count": count})
+                
+            df_oversized = pd.DataFrame(oversized_records)
             st.dataframe(df_oversized, use_container_width=True)
             
             csv_oversized = df_oversized.to_csv(index=False).encode('utf-8')
