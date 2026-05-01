@@ -6,7 +6,7 @@ import math
 st.set_page_config(page_title="Mullion Optimization & Procurement System", layout="wide")
 
 st.title("🏗️ Advanced Mullion Die Optimization & Procurement App")
-st.write("Upload your `TEST.csv` to process custom stock lengths, end trims, and cut lengths, and to review individual bar layouts.")
+st.write("Upload your data via CSV or paste raw values to process custom stock lengths, end trims, and cut lengths, and to review individual bar layouts.")
 
 # Sidebar Inputs for Conditions
 st.sidebar.header("⚙️ Configuration Parameters")
@@ -15,13 +15,38 @@ max_stock_input = st.sidebar.number_input("Max Bar Stock Length (in)", value=260
 end_trim_input = st.sidebar.number_input("End Trim per Bar (in)", value=2.0, step=0.125)
 cut_thickness_input = st.sidebar.number_input("Cut Thickness/Kerf (in)", value=0.1875, step=0.0625)
 
-# File Uploader
-uploaded_file = st.file_uploader("Upload your TEST.csv file", type=["csv"])
+# Input Choice
+input_method = st.radio("Select Input Method", ("Upload CSV", "Paste Data Manually"))
 
-if uploaded_file is not None:
-    df = pd.read_csv(uploaded_file)
+df = None
+
+if input_method == "Upload CSV":
+    uploaded_file = st.file_uploader("Upload your TEST.csv file", type=["csv"])
+    if uploaded_file is not None:
+        df = pd.read_csv(uploaded_file)
+else:
+    st.info("### Instructions\nEnter your data below, separated by commas (Value, L2, Count). One row per line.")
+    pasted_data = st.text_area("Data Inputs", "UA-1486, 140.5, 5\nUA-525, 140.5, 5\nUA-524, 140.5, 5", height=200)
     
-    # 1. Data Preview Section
+    if pasted_data:
+        lines = [x.strip() for x in pasted_data.strip().split("\n") if x.strip()]
+        rows = []
+        for line in lines:
+            parts = [x.strip() for x in line.split(",")]
+            if len(parts) == 3:
+                try:
+                    rows.append({
+                        "Value": parts[0],
+                        "L2": float(parts[1]),
+                        "Count": int(parts[2])
+                    })
+                except ValueError:
+                    pass
+        if rows:
+            df = pd.DataFrame(rows)
+
+if df is not None:
+    # 1. Data Preview
     st.subheader("📊 Data Preview")
     st.dataframe(df, use_container_width=True)
     
@@ -124,46 +149,50 @@ if uploaded_file is not None:
             mime="text/csv"
         )
         
-        # 2. Tabs for each unique die profile
+        # 2. Tabs and Toggle for each unique die profile
         st.markdown("---")
-        st.subheader("🔍 Detailed Layouts by Profile")
         
-        tabs = st.tabs(list(detailed_bins.keys()))
+        show_details = st.checkbox("See / Hide Detailed Bar Layouts", value=True)
         
-        for i, die in enumerate(detailed_bins.keys()):
-            with tabs[i]:
-                die_info = detailed_bins[die]
-                st.write(f"### Die: {die}")
-                st.write(f"**Optimal Stock Length:** {die_info['stock_length']} in | "
-                         f"**Total Bars Required:** {len(die_info['bins'])}")
-                
-                for idx, bar in enumerate(die_info['bins'], 1):
-                    sum_bar = sum(bar)
-                    total_cuts_kerf = (len(bar) - 1) * cut_thickness_input
-                    total_used_with_kerf = sum_bar + total_cuts_kerf
-                    remainder = die_info['stock_length'] - end_trim_input - total_used_with_kerf
+        if show_details:
+            st.subheader("🔍 Detailed Layouts by Profile")
+            
+            tabs = st.tabs(list(detailed_bins.keys()))
+            
+            for i, die in enumerate(detailed_bins.keys()):
+                with tabs[i]:
+                    die_info = detailed_bins[die]
+                    st.write(f"### Die: {die}")
+                    st.write(f"**Optimal Stock Length:** {die_info['stock_length']} in | "
+                             f"**Total Bars Required:** {len(die_info['bins'])}")
                     
-                    with st.expander(f"Bar {idx} | Usable Length Used: {total_used_with_kerf:.2f} in | Remainder Scrap: {remainder:.2f} in", expanded=(idx <= 3)):
+                    for idx, bar in enumerate(die_info['bins'], 1):
+                        sum_bar = sum(bar)
+                        total_cuts_kerf = (len(bar) - 1) * cut_thickness_input
+                        total_used_with_kerf = sum_bar + total_cuts_kerf
+                        remainder = die_info['stock_length'] - end_trim_input - total_used_with_kerf
                         
-                        st.markdown("#### Visual Bar Allocation")
-                        
-                        # Progress Bar Visualization
-                        usage_ratio = total_used_with_kerf / die_info['stock_length']
-                        st.progress(min(usage_ratio, 1.0), text=f"Bar Used: {total_used_with_kerf:.2f} in")
-                        
-                        # Columns representing individual cuts
-                        st.markdown("**Cut Details:**")
-                        cols = st.columns(min(len(bar), 6)) # limit up to 6 columns at a time to prevent truncation
-                        for c_idx, cut in enumerate(bar):
-                            with cols[c_idx % 6]:
-                                st.metric(label=f"Cut {c_idx+1}", value=f"{cut} in")
-                        
-                        st.write(f"**Original Cuts on Bar:** {bar}")
-                        st.write(f"**End Trim Allowance:** {end_trim_input} in")
-                        st.write(f"**Kerf Loss:** {total_cuts_kerf:.4f} in")
-                        st.write(f"**Remaining Scrap After Cuts:** {remainder:.2f} in")
-                        
-        # 3. Handle oversized/unmatched elements
+                        with st.expander(f"Bar {idx} | Usable Length Used: {total_used_with_kerf:.2f} in | Remainder Scrap: {remainder:.2f} in", expanded=(idx <= 3)):
+                            
+                            st.markdown("#### Visual Bar Allocation")
+                            
+                            # Native progress bar representation
+                            usage_ratio = total_used_with_kerf / die_info['stock_length']
+                            st.progress(min(usage_ratio, 1.0), text=f"Bar Used: {total_used_with_kerf:.2f} in")
+                            
+                            # Columns representing individual cuts
+                            st.markdown("**Cut Details:**")
+                            cols = st.columns(min(len(bar), 6)) # limit up to 6 columns
+                            for c_idx, cut in enumerate(bar):
+                                with cols[c_idx % 6]:
+                                    st.metric(label=f"Cut {c_idx+1}", value=f"{cut} in")
+                            
+                            st.write(f"**Original Cuts on Bar:** {bar}")
+                            st.write(f"**End Trim Allowance:** {end_trim_input} in")
+                            st.write(f"**Kerf Loss:** {total_cuts_kerf:.4f} in")
+                            st.write(f"**Remaining Scrap After Cuts:** {remainder:.2f} in")
+                            
+        # 3. Handle Oversized/Unmatched Elements
         if oversized_lengths:
             st.markdown("---")
             st.warning("⚠️ Oversized / Unmatched Pieces")
@@ -182,4 +211,4 @@ if uploaded_file is not None:
     else:
         st.info("No valid results found. Adjust parameters or check your CSV requirements.")
 else:
-    st.info("Awaiting CSV file upload to proceed with optimization.")
+    st.info("Please either upload a CSV file or paste your manual data to begin the optimization process.")
