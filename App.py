@@ -115,5 +115,3 @@ if required_lengths and available_stocks:
     )
 else:
     st.info("Enter the required lengths and available stock profiles in the sidebar to generate your layout.")
-
----
