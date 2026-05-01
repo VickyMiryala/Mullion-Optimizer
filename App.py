@@ -1,17 +1,15 @@
 import streamlit as st
 import pandas as pd
 import math
-import io
 
 # Page Configuration
 st.set_page_config(page_title="Mullion Optimization & Procurement System", layout="wide")
 
 st.title("🏗️ Advanced Mullion Die Optimization & Procurement App")
-st.write("Upload your `TEST.csv` to optimize profiles based on custom stock lengths, end trims, and cut thicknesses.")
+st.write("Upload your `TEST.csv` to process custom stock lengths, end trims, and cut lengths, and to review individual bar layouts.")
 
 # Sidebar Inputs for Conditions
 st.sidebar.header("⚙️ Configuration Parameters")
-
 min_stock_input = st.sidebar.number_input("Min Bar Stock Length (in)", value=140, step=10)
 max_stock_input = st.sidebar.number_input("Max Bar Stock Length (in)", value=260, step=10)
 end_trim_input = st.sidebar.number_input("End Trim per Bar (in)", value=2.0, step=0.125)
@@ -23,12 +21,13 @@ uploaded_file = st.file_uploader("Upload your TEST.csv file", type=["csv"])
 if uploaded_file is not None:
     df = pd.read_csv(uploaded_file)
     
+    # 1. Data Preview Tab
     st.subheader("📊 Data Preview")
-    st.dataframe(df.head(), use_container_width=True)
+    st.dataframe(df, use_container_width=True)
     
     # Process the data
     die_lengths = {}
-    oversized_lengths = [] # Holds items that do not fit the criteria
+    oversized_lengths = []
     
     for index, row in df.iterrows():
         die = row['Value']
@@ -38,7 +37,6 @@ if uploaded_file is not None:
         if pd.isna(die):
             continue
             
-        # Check condition: if length exceeds max usable stock length, tag as oversized
         usable_max_length = max_stock_input - end_trim_input
         if length > usable_max_length:
             for _ in range(count):
@@ -47,24 +45,19 @@ if uploaded_file is not None:
             
         if die not in die_lengths:
             die_lengths[die] = []
-        # Expand lengths based on the count/frequency in the CSV
         die_lengths[die].extend([length] * count)
         
     results_summary = []
     detailed_bins = {}
     
-    # Logic to find optimal lengths
     for die, lengths in die_lengths.items():
         max_req = max(lengths)
-        
-        # Lower bound of stock length must accommodate the longest required piece + trim
         min_allowed_stock = math.ceil(max_req) + end_trim_input
         calc_min_stock = max(min_stock_input, min_allowed_stock)
         
         valid_stocks = [s for s in range(int(calc_min_stock), int(max_stock_input) + 1)]
         
         if not valid_stocks:
-            # If no stock length range fits this maximum requirement, tag as oversized
             for l in lengths:
                 oversized_lengths.append({"Die": f"{die} - N", "Length": l})
             continue
@@ -77,7 +70,6 @@ if uploaded_file is not None:
             for length in sorted_lengths:
                 placed = False
                 for b in bins:
-                    # Space check: sum of items + (num_cuts * cut thickness)
                     potential_items = b + [length]
                     space_used = sum(potential_items) + (len(potential_items) - 1) * cut_thickness_input
                     if space_used <= usable_stock:
@@ -92,7 +84,6 @@ if uploaded_file is not None:
         best_bins = []
         for sl in valid_stocks:
             bins = calculate_mullion_optimization(lengths, sl)
-            # Find the option with the minimum number of bars or scrap
             if best_sl is None or len(bins) < len(best_bins):
                 best_sl = sl
                 best_bins = bins
@@ -124,75 +115,70 @@ if uploaded_file is not None:
     st.subheader("📋 Optimization Summary")
     st.dataframe(results_df, use_container_width=True)
     
-    # Download summary CSV
-    csv_summary = results_df.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="📥 Download Summary CSV",
-        data=csv_summary,
-        file_name="mullion_die_summary.csv",
-        mime="text/csv"
-    )
-    
+    # 2. Tabs for each unique die profile
     st.markdown("---")
-    st.subheader("🔎 Individual Die Layout / Bars Used")
+    st.subheader("🔍 Detailed Layouts by Profile")
     
-    selected_die = st.selectbox("Select a Die Profile to Inspect Layouts:", list(detailed_bins.keys()))
+    tabs = st.tabs(list(detailed_bins.keys()))
     
-    if selected_die:
-        die_info = detailed_bins[selected_die]
-        st.write(f"**Die Selected:** {selected_die} | **Optimal Stock Length:** {die_info['stock_length']} in")
-        
-        for idx, bar in enumerate(die_info['bins'], 1):
-            sum_bar = sum(bar)
-            # Add total kerf deduction of this bar
-            total_cuts_kerf = (len(bar) - 1) * cut_thickness_input
-            total_used_with_kerf = sum_bar + total_cuts_kerf
-            remainder = die_info['stock_length'] - end_trim_input - total_used_with_kerf
+    for i, die in enumerate(detailed_bins.keys()):
+        with tabs[i]:
+            die_info = detailed_bins[die]
+            st.write(f"### Die: {die}")
+            st.write(f"**Optimal Stock Length:** {die_info['stock_length']} in | "
+                     f"**Total Bars Required:** {len(die_info['bins'])}")
             
-            with st.expander(f"Bar {idx} | Usable Length Used: {total_used_with_kerf:.2f} in | Remainder Scrap: {remainder:.2f} in", expanded=(idx <= 3)):
-                st.write(f"**Individual Cuts on this bar:** {bar}")
+            for idx, bar in enumerate(die_info['bins'], 1):
+                sum_bar = sum(bar)
+                total_cuts_kerf = (len(bar) - 1) * cut_thickness_input
+                total_used_with_kerf = sum_bar + total_cuts_kerf
+                remainder = die_info['stock_length'] - end_trim_input - total_used_with_kerf
                 
-        # Export individual die layout option
-        single_bar_data = []
-        for idx, bar in enumerate(die_info['bins'], 1):
-            sum_bar = sum(bar)
-            total_cuts_kerf = (len(bar) - 1) * cut_thickness_input
-            total_used_with_kerf = sum_bar + total_cuts_kerf
-            remainder = die_info['stock_length'] - end_trim_input - total_used_with_kerf
-            
-            single_bar_data.append({
-                "Die": selected_die,
-                "Bar Number": idx,
-                "Cuts": str(bar),
-                "Used Length (in)": sum_bar,
-                "Kerf Loss (in)": round(total_cuts_kerf, 4),
-                "Scrap (in)": round(remainder, 4)
-            })
-        
-        df_export = pd.DataFrame(single_bar_data)
-        csv_single = df_export.to_csv(index=False).encode('utf-8')
-        
-        st.download_button(
-            label=f"📥 Download '{selected_die}' Cut Layout",
-            data=csv_single,
-            file_name=f"{selected_die}_cut_layout.csv",
-            mime="text/csv"
-        )
-        
-    # Handle Oversized elements if any
+                with st.expander(f"Bar {idx} | Usable Length Used: {total_used_with_kerf:.2f} in | Remainder Scrap: {remainder:.2f} in", expanded=(idx <= 3)):
+                    # Graphical visual presentation of the bar usage
+                    st.markdown("**Visual Bar Allocation**")
+                    html_bar = f"""
+                    <div style="display: flex; flex-direction: row; border: 2px solid #555; border-radius: 5px; height: 40px; width: 100%; margin-bottom: 10px; background-color: #f1f1f1;">
+                    """
+                    
+                    # Fill the width proportions for cuts
+                    for cut in bar:
+                        pct = (cut / die_info['stock_length']) * 90  # scaled to leave room
+                        html_bar += f"""
+                        <div style="background-color: #2b7a78; color: #fff; width: {pct}%; border-right: 1px solid #ffffff; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold;">
+                            {cut} in
+                        </div>
+                        """
+                        
+                    # Space for Kerf Loss
+                    if total_cuts_kerf > 0:
+                        kerf_pct = (total_cuts_kerf / die_info['stock_length']) * 90
+                        html_bar += f"""
+                        <div style="background-color: #3aafa9; color: #fff; width: {kerf_pct}%; border-right: 1px solid #ffffff; display: flex; align-items: center; justify-content: center; font-size: 9px;">
+                            Kerf
+                        </div>
+                        """
+                        
+                    # Space for Scrap
+                    rem_pct = (remainder / die_info['stock_length']) * 90
+                    html_bar += f"""
+                    <div style="background-color: #fe4a49; color: #fff; width: {rem_pct}%; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: bold;">
+                        Scrap: {remainder:.2f} in
+                    </div>
+                    """
+                    
+                    html_bar += "</div>"
+                    st.markdown(html_bar, unsafe_allow_html=True)
+                    
+                    st.write(f"* Actual Cuts: {bar}")
+                    st.write(f"* Scrap remaining after trim: {remainder:.2f} in")
+                    
+    # Handle Oversized / Unmatched elements
     if oversized_lengths:
         st.markdown("---")
         st.warning("⚠️ Oversized / Unmatched Pieces")
         st.write("The following cuts exceed the maximum stock length limits or do not fit standard criteria and require review:")
         df_oversized = pd.DataFrame(oversized_lengths)
         st.dataframe(df_oversized, use_container_width=True)
-        
-        csv_oversized = df_oversized.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="📥 Download Oversized List",
-            data=csv_oversized,
-            file_name="oversized_dies.csv",
-            mime="text/csv"
-        )
 else:
     st.info("Awaiting CSV file upload to proceed with optimization.")
