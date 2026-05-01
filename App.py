@@ -2,22 +2,18 @@ import streamlit as st
 import pandas as pd
 import math
 
-# Page Configuration
-st.set_page_config(page_title="Mullion Stock Length Optimizer", layout="wide")
+st.set_page_config(page_title="Advanced Mullion Optimizer", layout="wide")
 
-st.title("🏗️ Mullion Die Stock Length Optimizer")
-st.write("Upload your `TEST.csv` file to determine the optimal stock length between 140 and 260 inches for each unique die.")
+st.title("🏗️ Advanced Mullion Die Stock Length Optimizer")
+st.write("Upload your production file to generate the cut layout per bar for each unique die profile.")
 
-# File Uploader
-uploaded_file = st.file_uploader("Upload your TEST.csv file", type=["csv"])
+uploaded_file = st.file_uploader("Upload TEST.csv", type=["csv"])
 
 if uploaded_file is not None:
     df = pd.read_csv(uploaded_file)
     
-    st.subheader("📊 Uploaded Data Preview")
-    st.dataframe(df.head(), use_container_width=True)
+    st.success("File successfully loaded!")
     
-    # Process the data
     die_lengths = {}
     for index, row in df.iterrows():
         die = row['Value']
@@ -29,41 +25,26 @@ if uploaded_file is not None:
             
         if die not in die_lengths:
             die_lengths[die] = []
-        # Expand lengths based on the count/frequency
         die_lengths[die].extend([length] * count)
         
     results = []
     
+    # Iterate through unique dies
     for die, lengths in die_lengths.items():
-        max_req_len = max(lengths)
+        max_req = max(lengths)
+        min_stock = max(140, math.ceil(max_req))
         
-        # Constraints: 
-        # 1. Stock length must be >= maximum required length for that die
-        # 2. Stock length must be between 140 and 260 inches
-        min_stock = math.ceil(max_req_len)
-        min_stock = max(140, min_stock)
-        max_stock = 260
+        # Test available stock bars between the minimum required length and the upper bound of 260 inches.
+        valid_stocks = [s for s in range(140, 261) if s >= min_stock]
         
-        if min_stock > max_stock:
-            results.append({
-                "Die": die,
-                "Max Required Length (in)": max_req_len,
-                "Opt. Stock Length (in)": "N/A",
-                "Bars Required": "N/A",
-                "Total Scrap (in)": "N/A",
-                "Waste %": "N/A",
-                "Status": "Exceeds max stock limit of 260 in"
-            })
+        if not valid_stocks:
             continue
             
-        # Define the allowed range of stock lengths to test
-        stock_options = list(range(min_stock, max_stock + 1))
-        
-        def calculate_mullion_optimization(req_lengths, stock_length):
-            sorted_lengths = sorted(req_lengths, reverse=True)
+        # Optimization logic
+        def get_bins(req_lengths, stock_length):
+            sorted_len = sorted(req_lengths, reverse=True)
             bins = []
-            
-            for length in sorted_lengths:
+            for length in sorted_len:
                 placed = False
                 for b in bins:
                     if sum(b) + length <= stock_length:
@@ -72,49 +53,37 @@ if uploaded_file is not None:
                         break
                 if not placed:
                     bins.append([length])
-                    
-            total_stock_bars = len(bins)
-            total_required = sum(req_lengths)
-            total_allocated = total_stock_bars * stock_length
-            scrap = total_allocated - total_required
-            scrap_pct = (scrap / total_allocated) * 100 if total_allocated > 0 else 0
+            return bins
             
-            return {
-                "stock_length": stock_length,
-                "bars_needed": total_stock_bars,
-                "scrap_percentage": scrap_pct,
-                "scrap_inches": scrap,
-            }
-            
-        die_results = []
-        for sl in stock_options:
-            die_results.append(calculate_mullion_optimization(lengths, sl))
-            
-        # Find the layout with the minimum scrap waste
-        best_choice = min(die_results, key=lambda x: x['scrap_inches'])
+        best_sl = None
+        best_bins = []
+        for sl in valid_stocks:
+            bins = get_bins(lengths, sl)
+            if best_sl is None or len(bins) < len(best_bins):
+                best_sl = sl
+                best_bins = bins
+                
+        total_required = sum(lengths)
+        total_allocated = len(best_bins) * best_sl
+        scrap = total_allocated - total_required
+        waste_pct = (scrap / total_allocated) * 100
         
         results.append({
             "Die": die,
-            "Max Required Length (in)": max_req_len,
-            "Opt. Stock Length (in)": best_choice["stock_length"],
-            "Bars Required": best_choice["bars_needed"],
-            "Total Scrap (in)": round(best_choice["scrap_inches"], 2),
-            "Waste %": round(best_choice["scrap_percentage"], 2),
-            "Status": "Optimal"
+            "Required Length (in)": total_required,
+            "Optimal Stock Length (in)": best_sl,
+            "Bars Required": len(best_bins),
+            "Scrap (in)": round(scrap, 2),
+            "Waste %": round(waste_pct, 2)
         })
         
-    results_df = pd.DataFrame(results)
+    out_df = pd.DataFrame(results)
+    st.dataframe(out_df, use_container_width=True)
     
-    st.subheader("📋 Optimization Results per Die")
-    st.dataframe(results_df, use_container_width=True)
-    
-    # Download Button
-    csv = results_df.to_csv(index=False).encode('utf-8')
+    csv = out_df.to_csv(index=False).encode('utf-8')
     st.download_button(
-        label="📥 Download Optimized Results",
-        data=csv,
-        file_name="mullion_die_optimized_output.csv",
+        "Download Optimized Output", 
+        data=csv, 
+        file_name="mullion_die_optimized.csv", 
         mime="text/csv"
     )
-else:
-    st.info("⬆️ Await uploading a CSV file in order to run the optimization process.")
