@@ -6,9 +6,9 @@ import math
 st.set_page_config(page_title="Mullion Optimization & Procurement System", layout="wide")
 
 st.title("🏗️ Advanced Mullion Die Optimization & Procurement App")
-st.write("Process custom stock lengths, end trims, and cut lengths with precise background execution and manual die-by-die selection.")
+st.write("Process custom stock lengths, end trims, and cut lengths with precise background execution and manual die selection.")
 
-# Sidebar Inputs for Conditions
+# Sidebar Configuration Parameters
 st.sidebar.header("⚙️ Configuration Parameters")
 min_stock_input = st.sidebar.number_input("Min Bar Stock Length (in)", value=140, step=10)
 max_stock_input = st.sidebar.number_input("Max Bar Stock Length (in)", value=260, step=10)
@@ -16,10 +16,10 @@ end_trim_input = st.sidebar.number_input("End Trim per Bar (in)", value=2.0, ste
                                           help="Set to the trim amount per end. It is deducted from both ends of the bar.")
 cut_thickness_input = st.sidebar.number_input("Cut Thickness/Kerf (in)", value=0.1875, step=0.0625)
 
-# Selection Mode
+# Selection of Operating Mode
 run_mode = st.sidebar.radio("Select Processing Mode", ("Process All Dies", "Process Die Individually"))
 
-# Input Choice
+# Input Method Choice
 input_method = st.radio("Select Input Method", ("Upload CSV", "Paste Data Manually"))
 
 df = None
@@ -50,12 +50,10 @@ else:
             df = pd.DataFrame(rows)
 
 if df is not None:
-    # 1. Data Preview Section
     with st.expander("See/Hide Data Preview", expanded=True):
         st.subheader("📊 Data Preview")
         st.dataframe(df, use_container_width=True)
-    
-    # Process the data
+        
     die_lengths = {}
     oversized_lengths = []
     
@@ -82,15 +80,14 @@ if df is not None:
     results_summary = []
     detailed_bins = {}
     
-    # Check execution states
     if 'run_optimization' not in st.session_state:
         st.session_state['run_optimization'] = False
         
-    # Run Modes
+    # --- Mode 1: Process All Dies ---
     if run_mode == "Process All Dies":
         if st.button("Run Process for All Dies"):
             st.session_state['run_optimization'] = True
-        
+            
         if st.session_state['run_optimization'] and die_lengths:
             with st.status("Optimizing all dies at once...", expanded=True) as status:
                 st.write("Validating parameters and lengths...")
@@ -109,7 +106,6 @@ if df is not None:
                     def calculate_mullion_optimization(req_lengths, stock_length):
                         sorted_lengths = sorted(req_lengths, reverse=True)
                         bins = []
-                        # 2 * end_trim_input subtracted to account for trims on both sides
                         usable_stock = stock_length - (2 * end_trim_input)
                         
                         for length in sorted_lengths:
@@ -155,8 +151,8 @@ if df is not None:
                     }
                 status.update(label="Optimization Processing Complete!", state="complete", expanded=False)
                 
+    # --- Mode 2: Process Dies Individually ---
     else:
-        # Process Dies Individually Mode
         selected_die = st.selectbox("Select a Die Profile to Run:", list(die_lengths.keys()) if die_lengths else [])
         if st.button(f"Run Process for: {selected_die}"):
             st.session_state['run_optimization'] = True
@@ -217,7 +213,7 @@ if df is not None:
                 }
                 status.update(label=f"Done processing {selected_die}!", state="complete", expanded=False)
 
-    # 3. Render Output Table and Charts
+    # 3. Render Output Results
     if results_summary:
         results_df = pd.DataFrame(results_summary)
         st.markdown("---")
@@ -233,7 +229,9 @@ if df is not None:
         )
         
         st.markdown("---")
-        show_details = st.checkbox("See / Hide Detailed Bar Layouts", value=True)
+        
+        # Toggle to show or hide the detailed bar layouts
+        show_details = st.checkbox("See / Hide Detailed Bar Layouts", value=False)
         
         if show_details:
             st.subheader("🔍 Detailed Layouts by Profile")
@@ -254,6 +252,7 @@ if df is not None:
                         
                         with st.expander(f"Bar {idx} | Usable Length Used: {total_used_with_kerf:.2f} in | Remainder Scrap: {remainder:.2f} in", expanded=(idx <= 3)):
                             st.markdown("#### Visual Bar Allocation")
+                            
                             usage_ratio = (sum_bar + total_cuts_kerf) / die_info['stock_length']
                             st.progress(min(usage_ratio, 1.0), text=f"Bar Used: {total_used_with_kerf:.2f} in")
                             
@@ -268,12 +267,14 @@ if df is not None:
                             st.write(f"**Kerf Loss:** {total_cuts_kerf:.4f} in")
                             st.write(f"**Remaining Scrap After Cuts:** {remainder:.2f} in")
                             
-        # Oversized Partitions
+        # Handle Oversized Assemblies
         if oversized_lengths:
             st.markdown("---")
             st.warning("⚠️ Oversized / Unmatched Pieces")
-            st.dataframe(pd.DataFrame(oversized_lengths), use_container_width=True)
-            csv_oversized = pd.DataFrame(oversized_lengths).to_csv(index=False).encode('utf-8')
+            df_oversized = pd.DataFrame(oversized_lengths)
+            st.dataframe(df_oversized, use_container_width=True)
+            
+            csv_oversized = df_oversized.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="📥 Download Oversized List",
                 data=csv_oversized,
