@@ -21,7 +21,7 @@ uploaded_file = st.file_uploader("Upload your TEST.csv file", type=["csv"])
 if uploaded_file is not None:
     df = pd.read_csv(uploaded_file)
     
-    # 1. Data Preview Tab
+    # 1. Data Preview Section
     st.subheader("📊 Data Preview")
     st.dataframe(df, use_container_width=True)
     
@@ -109,76 +109,77 @@ if uploaded_file is not None:
             "waste_pct": waste_pct
         }
         
-    results_df = pd.DataFrame(results_summary)
-    
-    st.markdown("---")
-    st.subheader("📋 Optimization Summary")
-    st.dataframe(results_df, use_container_width=True)
-    
-    # 2. Tabs for each unique die profile
-    st.markdown("---")
-    st.subheader("🔍 Detailed Layouts by Profile")
-    
-    tabs = st.tabs(list(detailed_bins.keys()))
-    
-    for i, die in enumerate(detailed_bins.keys()):
-        with tabs[i]:
-            die_info = detailed_bins[die]
-            st.write(f"### Die: {die}")
-            st.write(f"**Optimal Stock Length:** {die_info['stock_length']} in | "
-                     f"**Total Bars Required:** {len(die_info['bins'])}")
-            
-            for idx, bar in enumerate(die_info['bins'], 1):
-                sum_bar = sum(bar)
-                total_cuts_kerf = (len(bar) - 1) * cut_thickness_input
-                total_used_with_kerf = sum_bar + total_cuts_kerf
-                remainder = die_info['stock_length'] - end_trim_input - total_used_with_kerf
-                
-                with st.expander(f"Bar {idx} | Usable Length Used: {total_used_with_kerf:.2f} in | Remainder Scrap: {remainder:.2f} in", expanded=(idx <= 3)):
-                    # Graphical visual presentation of the bar usage
-                    st.markdown("**Visual Bar Allocation**")
-                    html_bar = f"""
-                    <div style="display: flex; flex-direction: row; border: 2px solid #555; border-radius: 5px; height: 40px; width: 100%; margin-bottom: 10px; background-color: #f1f1f1;">
-                    """
-                    
-                    # Fill the width proportions for cuts
-                    for cut in bar:
-                        pct = (cut / die_info['stock_length']) * 90  # scaled to leave room
-                        html_bar += f"""
-                        <div style="background-color: #2b7a78; color: #fff; width: {pct}%; border-right: 1px solid #ffffff; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold;">
-                            {cut} in
-                        </div>
-                        """
-                        
-                    # Space for Kerf Loss
-                    if total_cuts_kerf > 0:
-                        kerf_pct = (total_cuts_kerf / die_info['stock_length']) * 90
-                        html_bar += f"""
-                        <div style="background-color: #3aafa9; color: #fff; width: {kerf_pct}%; border-right: 1px solid #ffffff; display: flex; align-items: center; justify-content: center; font-size: 9px;">
-                            Kerf
-                        </div>
-                        """
-                        
-                    # Space for Scrap
-                    rem_pct = (remainder / die_info['stock_length']) * 90
-                    html_bar += f"""
-                    <div style="background-color: #fe4a49; color: #fff; width: {rem_pct}%; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: bold;">
-                        Scrap: {remainder:.2f} in
-                    </div>
-                    """
-                    
-                    html_bar += "</div>"
-                    st.markdown(html_bar, unsafe_allow_html=True)
-                    
-                    st.write(f"* Actual Cuts: {bar}")
-                    st.write(f"* Scrap remaining after trim: {remainder:.2f} in")
-                    
-    # Handle Oversized / Unmatched elements
-    if oversized_lengths:
+    if results_summary:
+        results_df = pd.DataFrame(results_summary)
         st.markdown("---")
-        st.warning("⚠️ Oversized / Unmatched Pieces")
-        st.write("The following cuts exceed the maximum stock length limits or do not fit standard criteria and require review:")
-        df_oversized = pd.DataFrame(oversized_lengths)
-        st.dataframe(df_oversized, use_container_width=True)
+        st.subheader("📋 Optimization Summary")
+        st.dataframe(results_df, use_container_width=True)
+        
+        # Download summary CSV Button
+        csv_summary = results_df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Download Summary CSV",
+            data=csv_summary,
+            file_name="mullion_die_summary.csv",
+            mime="text/csv"
+        )
+        
+        # 2. Tabs for each unique die profile
+        st.markdown("---")
+        st.subheader("🔍 Detailed Layouts by Profile")
+        
+        tabs = st.tabs(list(detailed_bins.keys()))
+        
+        for i, die in enumerate(detailed_bins.keys()):
+            with tabs[i]:
+                die_info = detailed_bins[die]
+                st.write(f"### Die: {die}")
+                st.write(f"**Optimal Stock Length:** {die_info['stock_length']} in | "
+                         f"**Total Bars Required:** {len(die_info['bins'])}")
+                
+                for idx, bar in enumerate(die_info['bins'], 1):
+                    sum_bar = sum(bar)
+                    total_cuts_kerf = (len(bar) - 1) * cut_thickness_input
+                    total_used_with_kerf = sum_bar + total_cuts_kerf
+                    remainder = die_info['stock_length'] - end_trim_input - total_used_with_kerf
+                    
+                    with st.expander(f"Bar {idx} | Usable Length Used: {total_used_with_kerf:.2f} in | Remainder Scrap: {remainder:.2f} in", expanded=(idx <= 3)):
+                        
+                        st.markdown("#### Visual Bar Allocation")
+                        
+                        # Progress Bar Visualization
+                        usage_ratio = total_used_with_kerf / die_info['stock_length']
+                        st.progress(min(usage_ratio, 1.0), text=f"Bar Used: {total_used_with_kerf:.2f} in")
+                        
+                        # Columns representing individual cuts
+                        st.markdown("**Cut Details:**")
+                        cols = st.columns(min(len(bar), 6)) # limit up to 6 columns at a time to prevent truncation
+                        for c_idx, cut in enumerate(bar):
+                            with cols[c_idx % 6]:
+                                st.metric(label=f"Cut {c_idx+1}", value=f"{cut} in")
+                        
+                        st.write(f"**Original Cuts on Bar:** {bar}")
+                        st.write(f"**End Trim Allowance:** {end_trim_input} in")
+                        st.write(f"**Kerf Loss:** {total_cuts_kerf:.4f} in")
+                        st.write(f"**Remaining Scrap After Cuts:** {remainder:.2f} in")
+                        
+        # 3. Handle oversized/unmatched elements
+        if oversized_lengths:
+            st.markdown("---")
+            st.warning("⚠️ Oversized / Unmatched Pieces")
+            st.write("The following cuts exceed the maximum stock length limits or do not fit standard criteria and require review:")
+            df_oversized = pd.DataFrame(oversized_lengths)
+            st.dataframe(df_oversized, use_container_width=True)
+            
+            csv_oversized = df_oversized.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Download Oversized List",
+                data=csv_oversized,
+                file_name="oversized_dies.csv",
+                mime="text/csv"
+            )
+            
+    else:
+        st.info("No valid results found. Adjust parameters or check your CSV requirements.")
 else:
     st.info("Awaiting CSV file upload to proceed with optimization.")
