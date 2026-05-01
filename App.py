@@ -6,7 +6,7 @@ import math
 st.set_page_config(page_title="Mullion Optimization & Procurement System", layout="wide")
 
 st.title("🏗️ Advanced Mullion Die Optimization & Procurement App")
-st.write("Control exactly when the optimization process runs, either by uploading a CSV or pasting raw values below.")
+st.write("Process custom stock lengths, end trims, and cut lengths using either a CSV file or manual data entry.")
 
 # Sidebar Inputs for Conditions
 st.sidebar.header("⚙️ Configuration Parameters")
@@ -46,7 +46,7 @@ else:
             df = pd.DataFrame(rows)
 
 if df is not None:
-    # 1. Data Preview
+    # Data Preview Section
     st.subheader("📊 Data Preview")
     st.dataframe(df, use_container_width=True)
     
@@ -75,7 +75,7 @@ if df is not None:
     results_summary = []
     detailed_bins = {}
     
-    # 2. Manual Action Button to Run Process
+    # Button to Run Calculation
     if st.button("Run Optimization Process"):
         st.session_state['run_optimization'] = True
     else:
@@ -83,65 +83,66 @@ if df is not None:
             st.session_state['run_optimization'] = False
             
     if st.session_state['run_optimization']:
-        for die, lengths in die_lengths.items():
-            max_req = max(lengths)
-            min_allowed_stock = math.ceil(max_req) + end_trim_input
-            calc_min_stock = max(min_stock_input, min_allowed_stock)
-            
-            valid_stocks = [s for s in range(int(calc_min_stock), int(max_stock_input) + 1)]
-            
-            if not valid_stocks:
-                for l in lengths:
-                    oversized_lengths.append({"Die": f"{die} - N", "Length": l})
-                continue
+        with st.spinner('Optimizing mullion configurations... Please wait.'):
+            for die, lengths in die_lengths.items():
+                max_req = max(lengths)
+                min_allowed_stock = math.ceil(max_req) + end_trim_input
+                calc_min_stock = max(min_stock_input, min_allowed_stock)
                 
-            def calculate_mullion_optimization(req_lengths, stock_length):
-                sorted_lengths = sorted(req_lengths, reverse=True)
-                bins = []
-                usable_stock = stock_length - end_trim_input
+                valid_stocks = [s for s in range(int(calc_min_stock), int(max_stock_input) + 1)]
                 
-                for length in sorted_lengths:
-                    placed = False
-                    for b in bins:
-                        potential_items = b + [length]
-                        space_used = sum(potential_items) + (len(potential_items) - 1) * cut_thickness_input
-                        if space_used <= usable_stock:
-                            b.append(length)
-                            placed = True
-                            break
-                    if not placed:
-                        bins.append([length])
-                return bins
-                
-            best_sl = None
-            best_bins = []
-            for sl in valid_stocks:
-                bins = calculate_mullion_optimization(lengths, sl)
-                if best_sl is None or len(bins) < len(best_bins):
-                    best_sl = sl
-                    best_bins = bins
+                if not valid_stocks:
+                    for l in lengths:
+                        oversized_lengths.append({"Die": f"{die} - N", "Length": l})
+                    continue
                     
-            total_required = sum(lengths)
-            total_allocated = len(best_bins) * best_sl
-            scrap = total_allocated - total_required
-            waste_pct = (scrap / total_allocated) * 100 if total_allocated > 0 else 0
-            
-            results_summary.append({
-                "Die": die,
-                "Total Pieces": len(lengths),
-                "Required Length (in)": total_required,
-                "Optimal Stock Length (in)": best_sl,
-                "Bars Required": len(best_bins),
-                "Scrap (in)": round(scrap, 2),
-                "Waste %": round(waste_pct, 2)
-            })
-            
-            detailed_bins[die] = {
-                "stock_length": best_sl,
-                "bins": best_bins,
-                "waste_pct": waste_pct
-            }
-            
+                def calculate_mullion_optimization(req_lengths, stock_length):
+                    sorted_lengths = sorted(req_lengths, reverse=True)
+                    bins = []
+                    usable_stock = stock_length - end_trim_input
+                    
+                    for length in sorted_lengths:
+                        placed = False
+                        for b in bins:
+                            potential_items = b + [length]
+                            space_used = sum(potential_items) + (len(potential_items) - 1) * cut_thickness_input
+                            if space_used <= usable_stock:
+                                b.append(length)
+                                placed = True
+                                break
+                        if not placed:
+                            bins.append([length])
+                    return bins
+                    
+                best_sl = None
+                best_bins = []
+                for sl in valid_stocks:
+                    bins = calculate_mullion_optimization(lengths, sl)
+                    if best_sl is None or len(bins) < len(best_bins):
+                        best_sl = sl
+                        best_bins = bins
+                        
+                total_required = sum(lengths)
+                total_allocated = len(best_bins) * best_sl
+                scrap = total_allocated - total_required
+                waste_pct = (scrap / total_allocated) * 100 if total_allocated > 0 else 0
+                
+                results_summary.append({
+                    "Die": die,
+                    "Total Pieces": len(lengths),
+                    "Required Length (in)": total_required,
+                    "Optimal Stock Length (in)": best_sl,
+                    "Bars Required": len(best_bins),
+                    "Scrap (in)": round(scrap, 2),
+                    "Waste %": round(waste_pct, 2)
+                })
+                
+                detailed_bins[die] = {
+                    "stock_length": best_sl,
+                    "bins": best_bins,
+                    "waste_pct": waste_pct
+                }
+                
         if results_summary:
             results_df = pd.DataFrame(results_summary)
             st.markdown("---")
@@ -157,9 +158,8 @@ if df is not None:
                 mime="text/csv"
             )
             
-            # 3. Tabs and Toggle for each unique die profile
+            # Toggle Section to See/Hide Bar Details
             st.markdown("---")
-            
             show_details = st.checkbox("See / Hide Detailed Bar Layouts", value=True)
             
             if show_details:
@@ -184,13 +184,13 @@ if df is not None:
                                 
                                 st.markdown("#### Visual Bar Allocation")
                                 
-                                # Native progress bar representation
+                                # Progress Bar Visualization
                                 usage_ratio = total_used_with_kerf / die_info['stock_length']
                                 st.progress(min(usage_ratio, 1.0), text=f"Bar Used: {total_used_with_kerf:.2f} in")
                                 
                                 # Columns representing individual cuts
                                 st.markdown("**Cut Details:**")
-                                cols = st.columns(min(len(bar), 6)) # limit up to 6 columns
+                                cols = st.columns(min(len(bar), 6))
                                 for c_idx, cut in enumerate(bar):
                                     with cols[c_idx % 6]:
                                         st.metric(label=f"Cut {c_idx+1}", value=f"{cut} in")
@@ -200,7 +200,7 @@ if df is not None:
                                 st.write(f"**Kerf Loss:** {total_cuts_kerf:.4f} in")
                                 st.write(f"**Remaining Scrap After Cuts:** {remainder:.2f} in")
                                 
-            # 4. Handle Oversized/Unmatched Elements
+            # Handle Oversized / Unmatched Elements
             if oversized_lengths:
                 st.markdown("---")
                 st.warning("⚠️ Oversized / Unmatched Pieces")
@@ -217,5 +217,3 @@ if df is not None:
                 )
         else:
             st.info("No valid results found. Adjust parameters or check your CSV requirements.")
-else:
-    st.info("Please either upload a CSV file or paste your manual data to begin the optimization process.")
