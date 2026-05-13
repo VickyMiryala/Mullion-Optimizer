@@ -5,131 +5,292 @@ import math
 # Page Configuration
 st.set_page_config(page_title="Mullion Optimization & Procurement System", layout="wide")
 
-st.title("🏗️ Pro Mullion Die Optimization App")
-st.write("Full visual optimization for standard (140-260\") and custom oversized profiles.")
+st.title("🏗️ Advanced Mullion Die Optimization & Procurement App")
+st.write("Upload or paste data below to process custom stock lengths, end trims, and cut thicknesses.")
 
-# Sidebar Configuration
-st.sidebar.header("⚙️ Settings")
+# Sidebar Configuration Parameters
+st.sidebar.header("⚙️ Configuration Parameters")
 min_stock_input = st.sidebar.number_input("Min Bar Stock Length (in)", value=140, step=10)
 max_stock_input = st.sidebar.number_input("Max Bar Stock Length (in)", value=260, step=10)
-end_trim_input = st.sidebar.number_input("End Trim per Side (in)", value=2.0, step=0.125, help="Applied to BOTH ends.")
+end_trim_input = st.sidebar.number_input("End Trim per Bar (in)", value=2.0, step=0.125, 
+                                          help="Set to the trim amount per end. It is deducted from both ends of the bar.")
 cut_thickness_input = st.sidebar.number_input("Cut Thickness/Kerf (in)", value=0.1875, step=0.0625)
 
-run_mode = st.sidebar.radio("Processing Mode", ("All Dies", "Individual Die"))
-input_method = st.radio("Input Method", ("Upload CSV", "Manual Paste"))
+# Selection of Operating Mode
+run_mode = st.sidebar.radio("Select Processing Mode", ("Process All Dies", "Process Die Individually"))
+
+# Input Method Choice
+input_method = st.radio("Select Input Method", ("Upload CSV", "Paste Data Manually"))
 
 df = None
+
 if input_method == "Upload CSV":
-    uploaded_file = st.file_uploader("Upload TEST.csv", type=["csv"])
+    uploaded_file = st.file_uploader("Upload your TEST.csv file", type=["csv"])
     if uploaded_file is not None:
         df = pd.read_csv(uploaded_file)
 else:
-    st.info("### Instructions\nEnter: Value, L2, Count. One row per line.")
-    pasted_data = st.text_area("Paste Data", "UA-1486, 140.5, 5\nUA-2000, 275.0, 4", height=150)
+    st.info("### Instructions\nEnter your data below, separated by commas (Value, L2, Count). One row per line.")
+    pasted_data = st.text_area("Data Inputs", "UA-1486, 140.5, 5\nUA-525, 140.5, 5\nUA-524, 140.5, 5", height=200)
+    
     if pasted_data:
+        lines = [x.strip() for x in pasted_data.strip().split("\n") if x.strip()]
         rows = []
-        for line in pasted_data.strip().split("\n"):
+        for line in lines:
             parts = [x.strip() for x in line.split(",")]
             if len(parts) == 3:
                 try:
-                    rows.append({"Value": parts[0], "L2": float(parts[1]), "Count": int(parts[2])})
-                except ValueError: pass
-        if rows: df = pd.DataFrame(rows)
-
-def bin_pack(lengths, stock_length, trim, kerf):
-    sorted_len = sorted(lengths, reverse=True)
-    bins = []
-    usable = stock_length - (2 * trim)
-    for l in sorted_len:
-        fit = False
-        for b in bins:
-            # Space check: sum of cuts + total kerfs between cuts
-            if sum(b) + l + (len(b) * kerf) <= usable:
-                b.append(l)
-                fit = True
-                break
-        if not fit: bins.append([l])
-    return bins
+                    rows.append({
+                        "Value": parts[0],
+                        "L2": float(parts[1]),
+                        "Count": int(parts[2])
+                    })
+                except ValueError:
+                    pass
+        if rows:
+            df = pd.DataFrame(rows)
 
 if df is not None:
-    with st.expander("📊 Data Preview", expanded=True):
+    with st.expander("See/Hide Data Preview", expanded=True):
+        st.subheader("📊 Data Preview")
         st.dataframe(df, use_container_width=True)
-    
-    total_trim = 2 * end_trim_input
-    usable_max_std = max_stock_input - total_trim
-
-    # Separation logic
-    standard_data = {}
-    oversized_data = {}
-
-    for _, row in df.iterrows():
-        die, length, count = str(row['Value']), row['L2'], int(row['Count'])
-        if length > usable_max_std:
-            if die not in oversized_data: oversized_data[die] = []
-            oversized_data[die].extend([length] * count)
-        else:
-            if die not in standard_data: standard_data[die] = []
-            standard_data[die].extend([length] * count)
-
-    # Execution Buttons
-    if run_mode == "All Dies":
-        start_button = st.button("🚀 Run Full Optimization")
-    else:
-        selected_die = st.selectbox("Select Die Profile", list(standard_data.keys()))
-        start_button = st.button(f"🚀 Optimize {selected_die} Only")
-
-    if start_button:
-        # Standard Optimization Output
-        st.subheader("📋 Standard Stock Results (140-260\")")
-        targets = standard_data.keys() if run_mode == "All Dies" else [selected_die]
         
-        for die in targets:
-            if die not in standard_data: continue
-            lengths = standard_data[die]
+    die_lengths = {}
+    oversized_dict = {} # Tracks oversized elements by Die, Length, and Count
+    
+    for index, row in df.iterrows():
+        die = row['Value']
+        length = row['L2']
+        count = row['Count']
+        
+        if pd.isna(die):
+            continue
             
-            low = max(min_stock_input, math.ceil(max(lengths) + total_trim))
-            best_sl, best_bins = None, []
+        # End trim deducted on BOTH ends: 2 * end_trim_input
+        usable_max_length = max_stock_input - (2 * end_trim_input)
+        
+        if length > usable_max_length:
+            key = (die, length)
+            if key not in oversized_dict:
+                oversized_dict[key] = 0
+            oversized_dict[key] += count
+            continue
             
-            for sl in range(int(low), int(max_stock_input) + 1):
-                res = bin_pack(lengths, sl, end_trim_input, cut_thickness_input)
-                if best_sl is None or len(res) < len(best_bins):
-                    best_sl, best_bins = sl, res
-            
-            with st.expander(f"Die: {die} | Stock: {best_sl}\" | Bars: {len(best_bins)}", expanded=True):
-                for i, bar in enumerate(best_bins, 1):
-                    used_cuts = sum(bar)
-                    total_kerf = (len(bar)-1) * cut_thickness_input
-                    rem_scrap = best_sl - total_trim - used_cuts - total_kerf
-                    
-                    # Proportional HTML Visualizer
-                    html = f'<div style="display:flex; border:1px solid #333; height:35px; width:100%; background:#eee; margin-bottom:10px; border-radius:5px; overflow:hidden;">'
-                    html += f'<div style="background:#6c757d; width:{(end_trim_input/best_sl)*100}%; color:white; font-size:10px; display:flex; align-items:center; justify-content:center;">Trim</div>'
-                    for l in bar:
-                        html += f'<div style="background:#2b7a78; border-right:1px solid #fff; width:{(l/best_sl)*100}%; color:white; font-size:11px; display:flex; align-items:center; justify-content:center; font-weight:bold;">{l}</div>'
-                    if total_kerf > 0:
-                        html += f'<div style="background:#3aafa9; width:{(total_kerf/best_sl)*100}%;"></div>'
-                    html += f'<div style="background:#fe4a49; width:{(rem_scrap/best_sl)*100}%; color:white; font-size:10px; display:flex; align-items:center; justify-content:center;">{rem_scrap:.1f} Scrap</div>'
-                    html += f'<div style="background:#6c757d; width:{(end_trim_input/best_sl)*100}%; color:white; font-size:10px; display:flex; align-items:center; justify-content:center;">Trim</div></div>'
-                    st.markdown(html, unsafe_allow_html=True)
+        if die not in die_lengths:
+            die_lengths[die] = []
+        die_lengths[die].extend([length] * count)
+        
+    results_summary = []
+    detailed_bins = {}
+    
+    # Initialize Session State
+    if 'run_all' not in st.session_state:
+        st.session_state['run_all'] = False
+    if 'run_single' not in st.session_state:
+        st.session_state['run_single'] = False
 
-        # Oversized Optimization Output
-        if oversized_data:
-            st.markdown("---")
-            st.subheader("📏 Oversized Optimization (Custom Orders)")
-            for die, lengths in oversized_data.items():
-                custom_sl = max(lengths) + total_trim
-                res = bin_pack(lengths, custom_sl, end_trim_input, cut_thickness_input)
+    # --- Mode 1: Process All Dies ---
+    if run_mode == "Process All Dies":
+        run_all_button = st.button("Run Process for All Dies")
+        if run_all_button:
+            st.session_state['run_all'] = True
+            st.session_state['run_single'] = False
+            
+        if st.session_state['run_all'] and die_lengths:
+            with st.status("Optimizing all dies at once...", expanded=True) as status:
+                st.write("Validating parameters and lengths...")
                 
-                with st.expander(f"Die: {die} - N | Custom Order: {custom_sl}\" | Total Bars: {len(res)}", expanded=True):
-                    for idx, bar in enumerate(res, 1):
-                        st.write(f"**Custom Bar {idx}:** Contains cuts {bar} | Recommended Order Length: **{custom_sl}\"**")
+                for die, lengths in die_lengths.items():
+                    max_req = max(lengths)
+                    min_allowed_stock = math.ceil(max_req) + (2 * end_trim_input)
+                    calc_min_stock = max(min_stock_input, min_allowed_stock)
+                    valid_stocks = [s for s in range(int(calc_min_stock), int(max_stock_input) + 1)]
+                    
+                    if not valid_stocks:
+                        oversized_dict[(die, max_req)] = oversized_dict.get((die, max_req), 0) + len(lengths)
+                        continue
                         
-                        # Same Visualizer for Oversized
-                        rem_ov = custom_sl - total_trim - sum(bar) - ((len(bar)-1)*cut_thickness_input)
-                        html_ov = f'<div style="display:flex; border:1px solid #333; height:30px; width:100%; background:#eee; margin-bottom:5px; border-radius:5px; overflow:hidden;">'
-                        html_ov += f'<div style="background:#6c757d; width:{(end_trim_input/custom_sl)*100}%;"></div>'
-                        for l in bar:
-                            html_ov += f'<div style="background:#2b7a78; border-right:1px solid #fff; width:{(l/custom_sl)*100}%; color:white; font-size:10px; display:flex; align-items:center; justify-content:center;">{l}</div>'
-                        html_ov += f'<div style="background:#fe4a49; width:{(rem_ov/custom_sl)*100}%;"></div>'
-                        html_ov += f'<div style="background:#6c757d; width:{(end_trim_input/custom_sl)*100}%;"></div></div>'
-                        st.markdown(html_ov, unsafe_allow_html=True)
+                    def calculate_mullion_optimization(req_lengths, stock_length):
+                        sorted_lengths = sorted(req_lengths, reverse=True)
+                        bins = []
+                        usable_stock = stock_length - (2 * end_trim_input)
+                        
+                        for length in sorted_lengths:
+                            placed = False
+                            for b in bins:
+                                potential_items = b + [length]
+                                space_used = sum(potential_items) + (len(potential_items) - 1) * cut_thickness_input
+                                if space_used <= usable_stock:
+                                    b.append(length)
+                                    placed = True
+                                    break
+                            if not placed:
+                                bins.append([length])
+                        return bins
+                        
+                    best_sl = None
+                    best_bins = []
+                    for sl in valid_stocks:
+                        bins = calculate_mullion_optimization(lengths, sl)
+                        if best_sl is None or len(bins) < len(best_bins):
+                            best_sl = sl
+                            best_bins = bins
+                            
+                    total_required = sum(lengths)
+                    total_allocated = len(best_bins) * best_sl
+                    scrap = total_allocated - total_required
+                    waste_pct = (scrap / total_allocated) * 100 if total_allocated > 0 else 0
+                    
+                    results_summary.append({
+                        "Die": die,
+                        "Total Pieces": len(lengths),
+                        "Required Length (in)": total_required,
+                        "Optimal Stock Length (in)": best_sl,
+                        "Bars Required": len(best_bins),
+                        "Scrap (in)": round(scrap, 2),
+                        "Waste %": round(waste_pct, 2)
+                    })
+                    
+                    detailed_bins[die] = {
+                        "stock_length": best_sl,
+                        "bins": best_bins,
+                        "waste_pct": waste_pct
+                    }
+                status.update(label="Optimization Processing Complete!", state="complete", expanded=False)
+                
+    # --- Mode 2: Process Die Individually ---
+    else:
+        selected_die = st.selectbox("Select a Die Profile to Run:", list(die_lengths.keys()) if die_lengths else [])
+        run_single_button = st.button(f"Run Process for: {selected_die}")
+        
+        if run_single_button:
+            st.session_state['run_single'] = True
+            st.session_state['run_all'] = False
+            
+        if st.session_state['run_single'] and selected_die:
+            with st.status(f"Processing die {selected_die}...", expanded=True) as status:
+                lengths = die_lengths[selected_die]
+                max_req = max(lengths)
+                min_allowed_stock = math.ceil(max_req) + (2 * end_trim_input)
+                calc_min_stock = max(min_stock_input, min_allowed_stock)
+                valid_stocks = [s for s in range(int(calc_min_stock), int(max_stock_input) + 1)]
+                
+                def calculate_mullion_optimization(req_lengths, stock_length):
+                    sorted_lengths = sorted(req_lengths, reverse=True)
+                    bins = []
+                    usable_stock = stock_length - (2 * end_trim_input)
+                    
+                    for length in sorted_lengths:
+                        placed = False
+                        for b in bins:
+                            potential_items = b + [length]
+                            space_used = sum(potential_items) + (len(potential_items) - 1) * cut_thickness_input
+                            if space_used <= usable_stock:
+                                b.append(length)
+                                placed = True
+                                break
+                        if not placed:
+                            bins.append([length])
+                    return bins
+                    
+                best_sl = None
+                best_bins = []
+                for sl in valid_stocks:
+                    bins = calculate_mullion_optimization(lengths, sl)
+                    if best_sl is None or len(bins) < len(best_bins):
+                        best_sl = sl
+                        best_bins = bins
+                        
+                    total_required = sum(lengths)
+                    total_allocated = len(best_bins) * best_sl
+                    scrap = total_allocated - total_required
+                    waste_pct = (scrap / total_allocated) * 100 if total_allocated > 0 else 0
+                    
+                    results_summary.append({
+                        "Die": selected_die,
+                        "Total Pieces": len(lengths),
+                        "Required Length (in)": total_required,
+                        "Optimal Stock Length (in)": best_sl,
+                        "Bars Required": len(best_bins),
+                        "Scrap (in)": round(scrap, 2),
+                        "Waste %": round(waste_pct, 2)
+                    })
+                    
+                    detailed_bins[selected_die] = {
+                        "stock_length": best_sl,
+                        "bins": best_bins,
+                        "waste_pct": waste_pct
+                    }
+                    status.update(label=f"Done processing {selected_die}!", state="complete", expanded=False)
+
+    # 3. Render Output Results
+    if results_summary:
+        results_df = pd.DataFrame(results_summary)
+        st.markdown("---")
+        st.subheader("📋 Optimization Summary")
+        st.dataframe(results_df, use_container_width=True)
+        
+        csv_summary = results_df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Download Summary CSV",
+            data=csv_summary,
+            file_name="mullion_die_summary.csv",
+            mime="text/csv"
+        )
+        
+        st.markdown("---")
+        
+        # Toggle to show or hide the detailed bar layouts
+        show_details = st.checkbox("See / Hide Detailed Bar Layouts", value=False)
+        
+        if show_details:
+            st.subheader("🔍 Detailed Layouts by Profile")
+            tabs = st.tabs(list(detailed_bins.keys()))
+            
+            for i, die in enumerate(detailed_bins.keys()):
+                with tabs[i]:
+                    die_info = detailed_bins[die]
+                    st.write(f"### Die: {die}")
+                    st.write(f"**Optimal Stock Length:** {die_info['stock_length']} in | "
+                             f"**Total Bars Required:** {len(die_info['bins'])}")
+                    
+                    for idx, bar in enumerate(die_info['bins'], 1):
+                        sum_bar = sum(bar)
+                        total_cuts_kerf = (len(bar) - 1) * cut_thickness_input
+                        total_used_with_kerf = sum_bar + total_cuts_kerf
+                        remainder = die_info['stock_length'] - (2 * end_trim_input) - total_used_with_kerf
+                        
+                        with st.expander(f"Bar {idx} | Usable Length Used: {total_used_with_kerf:.2f} in | Remainder Scrap: {remainder:.2f} in", expanded=(idx <= 3)):
+                            st.markdown("#### Visual Bar Allocation")
+                            
+                            usage_ratio = (sum_bar + total_cuts_kerf) / die_info['stock_length']
+                            st.progress(min(usage_ratio, 1.0), text=f"Bar Used: {total_used_with_kerf:.2f} in")
+                            
+                            st.markdown("**Cut Details:**")
+                            cols = st.columns(min(len(bar), 6))
+                            for c_idx, cut in enumerate(bar):
+                                with cols[c_idx % 6]:
+                                    st.metric(label=f"Cut {c_idx+1}", value=f"{cut} in")
+                                    
+                            st.write(f"**Original Cuts on Bar:** {bar}")
+                            st.write(f"**End Trim Allowance:** {2 * end_trim_input} in")
+                            st.write(f"**Kerf Loss:** {total_cuts_kerf:.4f} in")
+                            st.write(f"**Remaining Scrap After Cuts:** {remainder:.2f} in")
+                            
+        # Handle Oversized Assemblies with Grouped Die/Length/Count
+        if oversized_dict:
+            st.markdown("---")
+            st.warning("⚠️ Oversized / Unmatched Pieces")
+            oversized_records = []
+            for (die, length), count in oversized_dict.items():
+                oversized_records.append({"Die": f"{die} - N", "Length (in)": length, "Count": count})
+                
+            df_oversized = pd.DataFrame(oversized_records)
+            st.dataframe(df_oversized, use_container_width=True)
+            
+            csv_oversized = df_oversized.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Download Oversized List",
+                data=csv_oversized,
+                file_name="oversized_dies.csv",
+                mime="text/csv"
+            )
